@@ -3,7 +3,7 @@ import { describe, expect, it, vi } from 'vitest';
 import enUs from 'strings/en-us.json';
 
 import type { TranscodeTestCheckResult, TranscodeTestStressResult } from '../api/useTranscodeTest';
-import { checkAdvice, checkDetail, checkError, formatFps, stressRunningHelp } from './transcodeTest';
+import { checkAdvice, checkDetail, checkError, formatFps, formatSpeed, singleStreamSpeed, stressRunningHelp } from './transcodeTest';
 
 const strings: Record<string, string | undefined> = enUs;
 
@@ -139,6 +139,47 @@ describe('checkError', () => {
         expect(checkError(check({ Outcome: 'Failed', FailedAfterDecoding: true, Error: 'Conversion failed!' }))).toBe('ffmpeg: Conversion failed!');
         expect(checkError(check({ Outcome: 'Skipped', Method: 'libsvtav1', Error: 'exit code 132, ended by signal 4' })))
             .toBe('ffmpeg: exit code 132, ended by signal 4');
+    });
+});
+
+describe('formatSpeed', () => {
+    it('shows the frame rate as a multiple of real time', () => {
+        expect(formatSpeed(47.952, 23.976)).toBe('2.00×');
+        expect(formatSpeed(21.6, 23.976)).toBe('0.90×');
+    });
+
+    it('never shows a stream under the threshold as real time', () => {
+        expect(formatSpeed(23.9, 23.976, 23.976)).toBe('0.99×');
+        expect(formatSpeed(23.975, 23.976, 23.976)).toBe('0.99×');
+        expect(formatSpeed(21.6, 24, 24)).toBe('0.90×');
+        expect(formatSpeed(23.976, 23.976, 23.976)).toBe('1.00×');
+        expect(formatSpeed(47.952, 23.976, 23.976)).toBe('2.00×');
+        // Without a threshold it rounds as usual.
+        expect(formatSpeed(23.975, 23.976)).toBe('1.00×');
+    });
+
+    it('shows a dash without a frame rate or a source frame rate', () => {
+        expect(formatSpeed(undefined, 23.976)).toBe('—');
+        expect(formatSpeed(null, 23.976)).toBe('—');
+        expect(formatSpeed(24, 0)).toBe('—');
+    });
+});
+
+describe('singleStreamSpeed', () => {
+    const stress = (overrides: Partial<TranscodeTestStressResult>) => ({ SourceFps: 23.976, ...overrides }) as TranscodeTestStressResult;
+
+    it('says how fast one stream ran alone', () => {
+        expect(singleStreamSpeed(stress({ SingleStreamFps: 271.8 })))
+            .toBe('One stream alone ran at 271.8 fps (11.34× real time).');
+    });
+
+    it('rounds a single stream under the threshold down', () => {
+        expect(singleStreamSpeed(stress({ SingleStreamFps: 23.9, ThresholdFps: 23.976 })))
+            .toBe('One stream alone ran at 23.9 fps (0.99× real time).');
+    });
+
+    it('says nothing before it is known', () => {
+        expect(singleStreamSpeed(stress({}))).toBe('');
     });
 });
 

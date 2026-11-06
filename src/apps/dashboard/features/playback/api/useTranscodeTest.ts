@@ -11,7 +11,7 @@ export type TranscodeTestOutcome = 'Passed' | 'Failed' | 'Software' | 'NotSuppor
 export type TranscodeTestCheckKind = 'Decode' | 'Encode' | 'Tonemap';
 export type TranscodeTestAdvice = 'None' | 'TurnOn' | 'TurnOff';
 export type TranscodeTestStressPhase = 'Starting' | 'WarmingUp' | 'KeepingUp' | 'FallingBehind' | 'Finished';
-export type TranscodeTestEndReason = 'None' | 'LimitReached' | 'MaxStreams' | 'StreamFailed' | 'StreamStalled' | 'Cancelled' | 'Error';
+export type TranscodeTestEndReason = 'None' | 'LimitReached' | 'MaxStreams' | 'StreamFailed' | 'StreamStalled' | 'NvencSessionLimit' | 'Cancelled' | 'Error';
 
 export interface TranscodeTestRequest {
     Kind: TranscodeTestKind
@@ -86,6 +86,10 @@ export interface TranscodeTestStressResult {
     FailSeconds: number
     ThresholdFps: number
     FpsRatio: number
+    SourceFps: number
+    SingleStreamFps?: number
+    SingleStreamSpeed?: number
+    SurveyFailureReason?: string
     FailedStreamId?: number
     FailedStreamFps?: number
     StreamsAtEnd?: number

@@ -113,3 +113,23 @@ export const stressRunningHelp = (stress: TranscodeTestStressResult) => globaliz
     stress.FailSeconds,
     stress.SettleSeconds
 );
+
+/**
+ * A frame rate as a multiple of real time, such as "1.25×", or a dash when it can't be worked out. A reading under the
+ * threshold is rounded down, so a stream that fell behind never shows as "1.00×".
+ */
+export const formatSpeed = (fps: number | null | undefined, sourceFps: number | null | undefined, thresholdFps?: number) => {
+    if (fps == null || !sourceFps) {
+        return '—';
+    }
+    const speed = fps / sourceFps;
+    return `${(thresholdFps != null && fps < thresholdFps ? Math.floor((speed * 100) + 1e-6) / 100 : speed).toFixed(2)}×`;
+};
+
+/** How fast one stream ran alone, in words, or an empty string before it is known. */
+export const singleStreamSpeed = (stress: TranscodeTestStressResult) => {
+    if (stress.SingleStreamFps == null || !stress.SourceFps) {
+        return '';
+    }
+    return globalize.translate('StressTestSingleStream', stress.SingleStreamFps.toFixed(1), formatSpeed(stress.SingleStreamFps, stress.SourceFps, stress.ThresholdFps));
+};
