@@ -1,5 +1,12 @@
 import globalize from 'lib/globalize';
-import type { TranscodeTestCheckResult, TranscodeTestMediaInfo, TranscodeTestOutputInfo, TranscodeTestStressResult } from '../api/useTranscodeTest';
+import type {
+    TranscodeTestCheckResult,
+    TranscodeTestMediaInfo,
+    TranscodeTestOutputInfo,
+    TranscodeTestStreamResult,
+    TranscodeTestStressPhase,
+    TranscodeTestStressResult
+} from '../api/useTranscodeTest';
 import { codecName, rangeName } from './mediaNames';
 
 export const checkName = (check: TranscodeTestCheckResult) => {
@@ -126,10 +133,96 @@ export const formatSpeed = (fps: number | null | undefined, sourceFps: number | 
     return `${(thresholdFps != null && fps < thresholdFps ? Math.floor((speed * 100) + 1e-6) / 100 : speed).toFixed(2)}×`;
 };
 
+/** A stream's frame rate for the table, "Did not start" for a stream that ended without a frame, or a dash. */
+export const streamFps = (stream: TranscodeTestStreamResult, fps: number | null | undefined) => {
+    if (fps != null) {
+        return formatFps(fps);
+    }
+    return stream.Status === 'notStarted' ? globalize.translate('StressTestStreamNotStarted') : '—';
+};
+
 /** How fast one stream ran alone, in words, or an empty string before it is known. */
 export const singleStreamSpeed = (stress: TranscodeTestStressResult) => {
     if (stress.SingleStreamFps == null || !stress.SourceFps) {
         return '';
     }
     return globalize.translate('StressTestSingleStream', stress.SingleStreamFps.toFixed(1), formatSpeed(stress.SingleStreamFps, stress.SourceFps, stress.ThresholdFps));
+};
+
+export const streamCount = (count: number) => (
+    count === 1 ? globalize.translate('StressTestStreamCountOne') : globalize.translate('StressTestStreamCount', count)
+);
+
+/** The result of a stress test that ended because a stream fell behind, with how many streams were running then. */
+export const limitSummary = (stress: TranscodeTestStressResult) => globalize.translate(
+    'StressTestFinishedLimit',
+    streamCount(stress.MaxStableStreams),
+    // An older server does not send StreamsAtEnd; the most streams that ran is the same count for this ending.
+    streamCount(stress.StreamsAtEnd || stress.PeakStreams),
+    stress.FailedStreamId ?? '',
+    stress.FailedStreamFps != null ? formatFps(stress.FailedStreamFps) : ''
+);
+
+/** The stress test's status chip: the phase while it runs, then how it ended. */
+export type StressStatusKey = Exclude<TranscodeTestStressPhase, 'Finished'>
+    | 'LimitReached' | 'MaxStreams' | 'NvencSessionLimit' | 'GpuMemoryFull' | 'CouldNotStart' | 'Cancelled' | 'Error';
+
+export const stressStatusKey = (stress: TranscodeTestStressResult): StressStatusKey => {
+    if (stress.Phase !== 'Finished') {
+        return stress.Phase;
+    }
+    switch (stress.EndReason) {
+        case 'LimitReached':
+        case 'MaxStreams':
+        case 'NvencSessionLimit':
+        case 'Cancelled':
+            return stress.EndReason;
+        case 'GpuMemoryFull':
+            return 'GpuMemoryFull';
+        case 'StreamFailed':
+        case 'StreamStalled':
+            return stress.CouldNotStartStream ? 'CouldNotStart' : 'Error';
+        default:
+            return 'Error';
+    }
+};
+
+/**
+ * The result of a stress test that ended because a stream produced no frames, or because the newest stream never
+ * started. When streams had kept up and the newest one never started, by stalling or by exiting before its first
+ * frame, the kept-up count is the result, shown as a warning; otherwise it is an error. A stalled stream did start, so
+ * it is said to have produced no frames rather than that the server could not start it.
+ */
+export const stallBanner = (stress: TranscodeTestStressResult): { severity: 'warning' | 'error', message: string } => {
+    const parts: string[] = [];
+    let severity: 'warning' | 'error' = 'error';
+    if (stress.CouldNotStartStream) {
+        severity = 'warning';
+        parts.push(stress.EndReason === 'StreamStalled' ?
+            globalize.translate('StressTestStartedNoFrames', streamCount(stress.MaxStableStreams), stress.FailedStreamId ?? '', stress.StartTimeoutSeconds) :
+            globalize.translate('StressTestCouldNotStart', streamCount(stress.MaxStableStreams), stress.FailedStreamId ?? ''));
+    } else {
+        parts.push(globalize.translate('StressTestStalled', stress.FailedStreamId ?? ''));
+    }
+    // Only ffmpeg's error lines are shown as the cause; its other output stays in the log.
+    parts.push(stress.Error ?
+        globalize.translate('StressTestFfmpegError', stress.Error) :
+        globalize.translate('StressTestFfmpegNoError'));
+    // ffmpeg never opened the file and barely used the CPU: point at the storage rather than the GPU.
+    if (stress.WaitingOnInput) {
+        parts.push(globalize.translate('StressTestWaitingOnInput'));
+    }
+    return { severity, message: parts.join(' ') };
+};
+
+/**
+ * The result of a stress test that ended because the GPU ran out of memory after streams kept up: the kept-up count
+ * is the result, shown as a warning, with ffmpeg's memory error.
+ */
+export const gpuMemoryBanner = (stress: TranscodeTestStressResult): { severity: 'warning', message: string } => {
+    const parts = [ globalize.translate('StressTestFinishedGpuMemory', streamCount(stress.MaxStableStreams), stress.FailedStreamId ?? '') ];
+    if (stress.Error) {
+        parts.push(globalize.translate('StressTestFfmpegError', stress.Error));
+    }
+    return { severity: 'warning', message: parts.join(' ') };
 };

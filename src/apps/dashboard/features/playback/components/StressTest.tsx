@@ -19,7 +19,22 @@ import Typography from '@mui/material/Typography';
 import globalize from 'lib/globalize';
 import type { TranscodeTestRequest, TranscodeTestStatus, TranscodeTestStressResult } from '../api/useTranscodeTest';
 import { useTestMediaSearch } from '../api/useTestMediaSearch';
-import { describeInput, describeOutput, describePipeline, formatFps, formatSpeed, singleStreamSpeed, stressRunningHelp } from '../utils/transcodeTest';
+import {
+    describeInput,
+    describeOutput,
+    describePipeline,
+    formatFps,
+    formatSpeed,
+    gpuMemoryBanner,
+    limitSummary,
+    singleStreamSpeed,
+    stallBanner,
+    streamCount,
+    streamFps,
+    stressRunningHelp,
+    stressStatusKey,
+    type StressStatusKey
+} from '../utils/transcodeTest';
 import TestConsole from './TestConsole';
 
 interface Target {
@@ -50,11 +65,7 @@ const formatItem = (item: BaseItemDto) => {
     return item.ProductionYear ? `${name} (${item.ProductionYear})` : name;
 };
 
-const streamCount = (count: number) => (
-    count === 1 ? globalize.translate('StressTestStreamCountOne') : globalize.translate('StressTestStreamCount', count)
-);
-
-const STATUS_COLORS = {
+const STATUS_COLORS: Record<StressStatusKey, 'info' | 'success' | 'warning' | 'error' | 'default'> = {
     Starting: 'info',
     WarmingUp: 'info',
     KeepingUp: 'success',
@@ -62,23 +73,10 @@ const STATUS_COLORS = {
     LimitReached: 'success',
     MaxStreams: 'success',
     NvencSessionLimit: 'warning',
+    GpuMemoryFull: 'warning',
+    CouldNotStart: 'warning',
     Cancelled: 'default',
     Error: 'error'
-} as const;
-
-const statusKey = (stress: TranscodeTestStressResult): keyof typeof STATUS_COLORS => {
-    if (stress.Phase !== 'Finished') {
-        return stress.Phase;
-    }
-    switch (stress.EndReason) {
-        case 'LimitReached':
-        case 'MaxStreams':
-        case 'NvencSessionLimit':
-        case 'Cancelled':
-            return stress.EndReason;
-        default:
-            return 'Error';
-    }
 };
 
 const ResultBanner: FC<{ stress: TranscodeTestStressResult, state: TranscodeTestStatus['State'] }> = ({ stress, state }) => {
@@ -89,7 +87,7 @@ const ResultBanner: FC<{ stress: TranscodeTestStressResult, state: TranscodeTest
         case 'LimitReached':
             return (
                 <Alert severity='success'>
-                    {globalize.translate('StressTestFinishedLimit', streamCount(stress.MaxStableStreams), streamCount(stress.StreamsAtEnd || stress.PeakStreams), stress.FailedStreamId ?? '', stress.FailedStreamFps != null ? formatFps(stress.FailedStreamFps) : '')}
+                    {limitSummary(stress)}
                     {details}
                 </Alert>
             );
@@ -109,8 +107,28 @@ const ResultBanner: FC<{ stress: TranscodeTestStressResult, state: TranscodeTest
             );
         case 'Cancelled':
             return <Alert severity='info'>{globalize.translate('StressTestStopped', streamCount(stress.MaxStableStreams))}</Alert>;
-        case 'StreamStalled':
-            return <Alert severity='error'>{globalize.translate('StressTestStalled', stress.FailedStreamId ?? '')}</Alert>;
+        case 'GpuMemoryFull': {
+            const banner = gpuMemoryBanner(stress);
+            return (
+                <Alert severity={banner.severity}>
+                    {banner.message}
+                    {details}
+                </Alert>
+            );
+        }
+        case 'StreamFailed':
+        case 'StreamStalled': {
+            if (stress.EndReason === 'StreamFailed' && !stress.CouldNotStartStream) {
+                return <Alert severity='error'>{globalize.translate('StressTestFailed', stress.Error ?? '')}</Alert>;
+            }
+            const banner = stallBanner(stress);
+            return (
+                <Alert severity={banner.severity}>
+                    {banner.message}
+                    {stress.CouldNotStartStream ? details : ''}
+                </Alert>
+            );
+        }
         case 'None':
             return state === 'Running' ? null : <Alert severity='error'>{globalize.translate('TranscodingTestFailed')}</Alert>;
         default:
@@ -191,7 +209,7 @@ const StressTest: FC<StressTestProps> = ({ status, isBusy, onStart, onStop, onCl
         setMaxStreams(Math.min(64, Math.max(1, parseInt(e.target.value, 10) || 1)));
     }, []);
 
-    const key = stress ? statusKey(stress) : undefined;
+    const key = stress ? stressStatusKey(stress) : undefined;
     const shownStreams = stress && (stress.Phase === 'Finished' ? stress.MaxStableStreams : stress.RunningStreams);
     const nextIn = stress?.NextStreamInSeconds;
 
@@ -345,7 +363,7 @@ const StressTest: FC<StressTestProps> = ({ status, isBusy, onStart, onStop, onCl
                                             <TableRow key={s.Id}>
                                                 <TableCell>{s.Id}</TableCell>
                                                 <TableCell align='right' sx={behind ? { color: 'error.main' } : undefined}>
-                                                    {fps != null ? formatFps(fps) : '—'}
+                                                    {streamFps(s, fps)}
                                                 </TableCell>
                                                 <TableCell align='right' sx={behind ? { color: 'error.main' } : undefined}>
                                                     {formatSpeed(fps, stress.SourceFps, stress.ThresholdFps)}
